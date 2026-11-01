@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="hi"><head><meta charset="utf-8"><title>Pro Camera</title>
+<link rel="manifest" href="manifest.json"><meta name="theme-color" content="#0d0d10"><link rel="icon" href="icon-192.png">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#0d0d10;--pn:#18181d;--tx:#f2f2f5;--mu:#8b8b96;--ac:#ffb020;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:light){:root:not([data-theme=dark]){--bg:#101013}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%}
+.bar{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;gap:6px}
+.chip{background:var(--pn);color:var(--tx);border:0;border-radius:18px;padding:8px 12px;font-size:13px}
+.chip.on{background:var(--ac);color:#111}
+#stage{flex:1;position:relative;min-height:0;display:flex;align-items:center;justify-content:center;background:#000}
+canvas#gl{max-width:100%;max-height:100%}
+#grid{position:absolute;inset:0;pointer-events:none;display:none;background:linear-gradient(#fff6 1px,#0000 1px) 0 33.3%/100% 33.3%,linear-gradient(90deg,#fff6 1px,#0000 1px) 33.3% 0/33.3% 100%}
+#hist{position:absolute;left:8px;top:8px;width:110px;height:50px;background:#0008;border-radius:6px;display:none}
+#count{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:96px;font-weight:700;text-shadow:0 2px 12px #000}
+#msg{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px;background:#000c}
+#panel{background:var(--pn);padding:6px 12px;height:150px;overflow-y:auto}
+.tabs{display:flex;gap:4px;overflow-x:auto;padding:6px 12px;background:var(--pn)}
+.tabs button{background:none;border:0;color:var(--mu);padding:6px 10px;font-size:13px;white-space:nowrap}
+.tabs button.on{color:var(--ac);border-bottom:2px solid var(--ac)}
+.row{display:flex;align-items:center;gap:8px;margin:5px 0}
+.row label{width:92px;color:var(--mu);font-size:12px}.row output{width:38px;text-align:right;font-size:12px}
+.row input{flex:1;accent-color:var(--ac)}
+.pre{display:flex;gap:8px;overflow-x:auto}.pre .chip{flex:none}
+.shut{display:flex;justify-content:space-around;align-items:center;padding:10px;background:var(--pn)}
+#shutter{width:68px;height:68px;border-radius:50%;border:4px solid #fff;background:#fff3;position:relative}
+#shutter:active{background:#fff}
+#shutter.rec{background:#e33}
+.ic{width:46px;height:46px;border-radius:50%;background:#2a2a31;border:0;color:var(--tx);font-size:18px}
+#shot{position:fixed;inset:0;background:#000e;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;z-index:9}
+#shot img{max-width:100%;max-height:70%;border-radius:8px}
+</style></head><body>
+<div id="app">
+ <div class="bar">
+  <button class="chip" id="bFlip">🔄 Flip</button>
+  <button class="chip" id="bGrid">▦ Grid</button>
+  <button class="chip" id="bTimer">⏱ Off</button>
+  <button class="chip" id="bHist">📊</button>
+  <button class="chip" id="bRes">HD</button>
+ </div>
+ <div id="stage"><canvas id="gl"></canvas><div id="grid"></div><canvas id="hist" width="110" height="50"></canvas><div id="count"></div>
+  <div id="msg"><div id="msgt">Camera access chahiye</div><button class="chip on" id="bStart">Camera start karo</button><label class="chip">📁 Photo upload karke grade karo<input type="file" id="file" accept="image/*" hidden></label></div></div>
+ <div class="tabs" id="tabs"></div>
+ <div id="panel"></div>
+ <div class="shut"><label class="ic" style="display:flex;align-items:center;justify-content:center">🖼<input type="file" id="file2" accept="image/*" hidden></label><button id="shutter" aria-label="Capture"></button><button class="ic" id="bReset">↺</button></div>
+</div>
+<div id="shot"><img id="shotImg" alt="captured"><div style="color:#bbb">Save karne ke liye photo ko long-press karein</div><div><button class="chip on" id="bShare">Share / Save</button> <button class="chip" id="bClose">Close</button></div></div>
+<script>
+const $=id=>document.getElementById(id);
+const P={exp:0,con:0,hi:0,sh:0,sat:0,vib:0,temp:0,tint:0,sharp:.3,vig:0,grain:0,fade:0,shHue:.6,shAmt:0,hiHue:.1,hiAmt:0,bw:0};
+const DEF={...P};
+const TABS={
+ Light:[['exp','Exposure',-2,2,.05],['con','Contrast',-.5,.8,.01],['hi','Highlights',-1,1,.01],['sh','Shadows',-1,1,.01],['fade','Fade',0,1,.01]],
+ Color:[['sat','Saturation',-1,1,.01],['vib','Vibrance',-1,1,.01],['temp','Temp',-1,1,.01],['tint','Tint',-1,1,.01],['bw','B&W',0,1,.01]],
+ Grade:[['shHue','Shadow hue',0,1,.01],['shAmt','Shadow tint',0,1,.01],['hiHue','Highlight hue',0,1,.01],['hiAmt','Highlight tint',0,1,.01]],
+ Effects:[['sharp','Sharpen',0,1,.01],['vig','Vignette',0,1,.01],['grain','Grain',0,1,.01]]
+};
+const PRESETS={
+ Natural:{},
+ 'Mehndi Pop':{exp:.1,con:.18,sat:.2,vib:.45,temp:.18,sharp:.6,vig:.25,sh:.1,hi:-.1,shHue:.02,shAmt:.25},
+ Cinematic:{con:.25,sat:-.05,temp:.1,shHue:.52,shAmt:.5,hiHue:.08,hiAmt:.4,vig:.35,fade:.15,sharp:.4},
+ Vintage:{con:-.05,sat:-.2,temp:.3,fade:.5,grain:.4,vig:.4,hiHue:.12,hiAmt:.3},
+ Vivid:{con:.2,sat:.35,vib:.4,sharp:.6,exp:.05},
+ Noir:{bw:1,con:.4,vig:.4,grain:.3,sharp:.5},
+ Cool:{temp:-.35,tint:.05,con:.1,sat:.05,shHue:.6,shAmt:.3},
+ Golden:{temp:.5,exp:.1,hi:-.2,sat:.15,hiHue:.1,hiAmt:.4,vig:.2}
+};
+let tab='Presets';
+function renderTabs(){const t=$('tabs');t.innerHTML='';['Presets',...Object.keys(TABS),'Pro'].forEach(k=>{const b=document.createElement('button');b.textContent=k;if(k==tab)b.className='on';b.onclick=()=>{tab=k;renderTabs();renderPanel()};t.appendChild(b)})}
+function slider(box,lab,min,max,step,val,fn){const r=document.createElement('div');r.className='row';r.innerHTML=`<label>${lab}</label><input type=range min=${min} max=${max} step=${step} value=${val}><output>${(+val).toFixed(2)}</output>`;const i=r.querySelector('input'),o=r.querySelector('output');i.oninput=()=>{o.textContent=(+i.value).toFixed(2);fn(+i.value)};box.appendChild(r)}
+function renderPanel(){const p=$('panel');p.innerHTML='';
+ if(tab=='Presets'){const d=document.createElement('div');d.className='pre';Object.keys(PRESETS).forEach(n=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{Object.assign(P,DEF,PRESETS[n]);[...d.children].forEach(c=>c.classList.remove('on'));b.classList.add('on')};d.appendChild(b)});p.appendChild(d);return}
+ if(tab=='Pro'){proPanel(p);return}
+ TABS[tab].forEach(([k,l,a,b,s])=>slider(p,l,a,b,s,P[k],v=>P[k]=v))}
+// ---------- WebGL ----------
+const cv=$('gl'),gl=cv.getContext('webgl',{preserveDrawingBuffer:true});
+const vs='attribute vec2 p;varying vec2 uv;void main(){uv=p*.5+.5;gl_Position=vec4(p,0,1)}';
+const fs=`precision mediump float;varying vec2 uv;uniform sampler2D t;uniform vec2 res;uniform float mir,time,exp_,con,hi,sh,sat,vib,temp,tint,sharp,vig,grain,fade,shHue,shAmt,hiHue,hiAmt,bw;
+vec3 h2r(float h){return clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);}
+float rnd(vec2 s){return fract(sin(dot(s,vec2(12.9898,78.233)))*43758.5453);}
+void main(){vec2 u=vec2(mir>.5?1.-uv.x:uv.x,uv.y);vec2 px=1./res;vec3 c=texture2D(t,u).rgb;
+vec3 bl=(texture2D(t,u+vec2(px.x,0.)).rgb+texture2D(t,u-vec2(px.x,0.)).rgb+texture2D(t,u+vec2(0.,px.y)).rgb+texture2D(t,u-vec2(0.,px.y)).rgb)*.25;
+c+=(c-bl)*sharp*2.5;c*=pow(2.,exp_);
+c.r*=1.+temp*.3;c.b*=1.-temp*.3;c.g*=1.-tint*.2;c.rb*=1.+tint*.1;
+float l=dot(c,vec3(.299,.587,.114));
+c+=sh*(1.-smoothstep(0.,.5,l))*.4+hi*smoothstep(.5,1.,l)*.4;
+c=(c-.5)*(1.+con)+.5;
+l=dot(c,vec3(.299,.587,.114));float s=max(c.r,max(c.g,c.b))-min(c.r,min(c.g,c.b));
+c=mix(vec3(l),c,1.+sat+vib*(1.-s));
+c=mix(c,c*(.5+h2r(shHue))*1.4,shAmt*(1.-l));c=mix(c,c*(.5+h2r(hiHue))*1.2,hiAmt*l);
+c=c*(1.-fade*.3)+fade*.1;
+c=mix(c,vec3(dot(c,vec3(.299,.587,.114))),bw);
+c*=1.-vig*smoothstep(.3,.9,distance(uv,vec2(.5)));
+c+=(rnd(uv*res+time)-.5)*grain*.3;
+gl_FragColor=vec4(clamp(c,0.,1.),1.);}`;
+function sh_(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o}
+const pg=gl.createProgram();gl.attachShader(pg,sh_(gl.VERTEX_SHADER,vs));gl.attachShader(pg,sh_(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pg);gl.useProgram(pg);
+const bf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+const lp=gl.getAttribLocation(pg,'p');gl.enableVertexAttribArray(lp);gl.vertexAttribPointer(lp,2,gl.FLOAT,false,0,0);
+const tx=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tx);
+[gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T].forEach(w=>gl.texParameteri(gl.TEXTURE_2D,w,gl.CLAMP_TO_EDGE));
+[gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER].forEach(f=>gl.texParameteri(gl.TEXTURE_2D,f,gl.LINEAR));
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+const U=n=>gl.getUniformLocation(pg,n);
+let src=null,sw=0,sh2=0,mirror=false,hc=0;
+const vid=document.createElement('video');vid.playsInline=true;vid.muted=true;
+function frame(ts){requestAnimationFrame(frame);if(!src)return;
+ const isV=src===vid;if(isV&&vid.readyState<2)return;
+ const w=isV?vid.videoWidth:src.naturalWidth,h=isV?vid.videoHeight:src.naturalHeight;
+ if(!w)return;const sc=Math.min(1,1920/Math.max(w,h));
+ if(cv.width!=Math.round(w*sc)||cv.height!=Math.round(h*sc)){cv.width=Math.round(w*sc);cv.height=Math.round(h*sc);gl.viewport(0,0,cv.width,cv.height)}
+ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,src);
+ gl.uniform2f(U('res'),cv.width,cv.height);gl.uniform1f(U('mir'),isV&&mirror?1:0);gl.uniform1f(U('time'),ts%1000/1000);
+ for(const k in P)gl.uniform1f(U(k=='exp'?'exp_':k),P[k]);
+ gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+ if(histOn&&++hc%8==0)drawHist()}
+requestAnimationFrame(frame);
+// ---------- Histogram ----------
+let histOn=false;const hs=document.createElement('canvas');hs.width=64;hs.height=48;const hx=hs.getContext('2d',{willReadFrequently:true});
+function drawHist(){hx.drawImage(cv,0,0,64,48);const d=hx.getImageData(0,0,64,48).data,H=[new Array(32).fill(0),new Array(32).fill(0),new Array(32).fill(0)];
+ for(let i=0;i<d.length;i+=4)for(let k=0;k<3;k++)H[k][d[i+k]>>3]++;
+ const c=$('hist').getContext('2d');c.clearRect(0,0,110,50);const m=Math.max(...H.flat());
+ ['#f55','#5f5','#59f'].forEach((col,k)=>{c.strokeStyle=col;c.beginPath();H[k].forEach((v,i)=>c.lineTo(i*110/31,50-v/m*48));c.stroke()})}
+// ---------- Camera ----------
+let stream=null,facing='environment',resIdx=1;const RES=[['SD',1280,720],['HD',1920,1080],['4K',3840,2160]];
+async function start(){
+ try{if(stream)stream.getTracks().forEach(t=>t.stop());
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:RES[resIdx][1]},height:{ideal:RES[resIdx][2]}},audio:false});
+  vid.srcObject=stream;await vid.play();src=vid;mirror=facing=='user';$('msg').style.display='none';
+  if(tab=='Pro')renderPanel()}
+ catch(e){$('msgt').textContent='Camera nahi khula ('+(e.name||'error')+'). Browser permission allow karein, ya neeche se photo upload karein.';$('msg').style.display='flex'}}
+function loadFile(f){if(!f)return;const im=new Image();im.onload=()=>{src=im;$('msg').style.display='none'};im.src=URL.createObjectURL(f)}
+$('bStart').onclick=start;$('file').onchange=e=>loadFile(e.target.files[0]);$('file2').onchange=e=>loadFile(e.target.files[0]);
+$('bFlip').onclick=()=>{facing=facing=='user'?'environment':'user';start()};
+$('bGrid').onclick=e=>{const g=$('grid');const on=g.style.display!='block';g.style.display=on?'block':'none';e.target.classList.toggle('on',on)};
+$('bHist').onclick=e=>{histOn=!histOn;$('hist').style.display=histOn?'block':'none';e.target.classList.toggle('on',histOn)};
+$('bRes').onclick=e=>{resIdx=(resIdx+1)%3;e.target.textContent=RES[resIdx][0];if(stream)start()};
+let tm=0;$('bTimer').onclick=e=>{tm=tm==0?3:tm==3?10:0;e.target.textContent='⏱ '+(tm?tm+'s':'Off');e.target.classList.toggle('on',!!tm)};
+$('bReset').onclick=()=>{Object.assign(P,DEF);renderPanel()};
+// Pro hardware controls
+function proPanel(p){const tr=stream&&stream.getVideoTracks()[0];
+ if(!tr||!tr.getCapabilities){p.innerHTML='<div style="color:var(--mu)">Pehle camera start karein. Hardware controls sirf supported phones (Android Chrome) par milte hain.</div>';return}
+ const cap=tr.getCapabilities(),map=[['zoom','Zoom'],['exposureCompensation','EV'],['iso','ISO'],['exposureTime','Shutter'],['focusDistance','Focus'],['colorTemperature','WB (K)'],['brightness','HW Bright'],['contrast','HW Contrast'],['saturation','HW Sat'],['sharpness','HW Sharp']];
+ let n=0;map.forEach(([k,l])=>{const c=cap[k];if(c&&c.max!==undefined){n++;const st=tr.getSettings()[k]??c.min;
+  slider(p,l,c.min,c.max,c.step||(c.max-c.min)/100,st,v=>{const a={};a[k]=v;if(k=='exposureTime')a.exposureMode='manual';if(k=='focusDistance')a.focusMode='manual';if(k=='colorTemperature')a.whiteBalanceMode='manual';if(k=='iso')a.exposureMode='manual';tr.applyConstraints({advanced:[a]}).catch(()=>{})})}});
+ if(!n)p.innerHTML='<div style="color:var(--mu)">Is device/browser par hardware controls available nahi hain. Software grading (Light/Color/Grade) poori tarah kaam karti hai.</div>'}
+// Capture
+function snap(){cv.toBlob(b=>{const u=URL.createObjectURL(b);$('shotImg').src=u;window._blob=b;$('shot').style.display='flex'},'image/jpeg',.95)}
+$('shutter').onclick=()=>{if(!src)return;if(!tm)return snap();let n=tm;const c=$('count');c.style.display='flex';c.textContent=n;const iv=setInterval(()=>{n--;if(n<=0){clearInterval(iv);c.style.display='none';snap()}else c.textContent=n},1000)};
+$('bClose').onclick=()=>$('shot').style.display='none';
+$('bShare').onclick=async()=>{try{const f=new File([window._blob],'photo.jpg',{type:'image/jpeg'});if(navigator.canShare&&navigator.canShare({files:[f]}))await navigator.share({files:[f]});else{const a=document.createElement('a');a.href=$('shotImg').src;a.download='photo.jpg';a.click()}}catch(e){}};
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+renderTabs();renderPanel();$('msg').style.display='flex';
+</script></body></html>
